@@ -6,9 +6,15 @@
 <meta name="theme-color" content="#e8732e">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🍳</text></svg>">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://dfrod.github.io/maa-santoshi-store/">
 <meta property="og:title" content="Maa Santoshi Steel Center — Kitchenwares">
 <meta property="og:description" content="Browse our kitchenware and place your order on WhatsApp.">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://dfrod.github.io/maa-santoshi-store/og-preview.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Maa Santoshi Steel Center — Kitchenwares, Bhandup West, Mumbai">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://dfrod.github.io/maa-santoshi-store/og-preview.png">
 <div id="root"></div>
 
 <style>
@@ -755,7 +761,7 @@ const DEFAULT_SETTINGS = {
 // codes shape: [{ code, percent, active }] — discount codes a customer can enter in the cart
 // shop: contact details shown in the footer + used for WhatsApp ordering
 // charges: deliveryFee, freeAbove (free-delivery threshold), minOrder, gstPercent
-const STORE_VERSION = "1"; // bump this and redeploy to push an updated catalog/settings to returning visitors
+const STORE_VERSION = "2"; // bump this and redeploy to push an updated catalog/settings to returning visitors
 
 // ---- storage helpers ----
 async function loadPin() {
@@ -964,12 +970,12 @@ function LogoMark() {
 }
 
 const SEED = [
-  { id:"s1", name:"Copper Core Sauté Pan", cat:"Cookware", price:10999, desc:"Tri-ply stainless with a copper core for even, responsive heat.", img:null },
-  { id:"s2", name:"Acacia Spoon Set", cat:"Utensils", price:2899, desc:"Hand-finished wooden spoons that won't scratch your pans.", img:null },
-  { id:"s3", name:"Stand Mixer 5.5Q", cat:"Mixers", price:24999, desc:"10-speed tilt-head mixer with a stainless bowl and dough hook.", img:null },
-  { id:"s4", name:"8-in-1 Pressure Cooker", cat:"Cookers", price:9999, desc:"Pressure cook, slow cook, steam, and sauté in one pot.", img:null },
-  { id:"s5", name:"Nonstick Bake Set", cat:"Bakeware", price:4199, desc:"Warp-resistant sheet pans and loaf tins for everyday baking.", img:null },
-  { id:"s6", name:"Glass Canister Trio", cat:"Storage", price:3299, desc:"Airtight borosilicate jars with bamboo lids for pantry staples.", img:null },
+  { id:"s1", name:"Copper Core Sauté Pan", cat:"Cookware", price:10999, desc:"Tri-ply stainless with a copper core for even, responsive heat.", img:"Copper%20Core%20Saute%20Pan.jpg" },
+  { id:"s2", name:"Acacia Spoon Set", cat:"Utensils", price:2899, desc:"Hand-finished wooden spoons that won't scratch your pans.", img:"Spoon%20Set.jpg" },
+  { id:"s3", name:"Stand Mixer 5.5Q", cat:"Mixers", price:24999, desc:"10-speed tilt-head mixer with a stainless bowl and dough hook.", img:"Stand%20Mixer.jpg" },
+  { id:"s4", name:"8-in-1 Pressure Cooker", cat:"Cookers", price:9999, desc:"Pressure cook, slow cook, steam, and sauté in one pot.", img:"8%20in%20one%20pressure%20cooker.jpg" },
+  { id:"s5", name:"Nonstick Bake Set", cat:"Bakeware", price:4199, desc:"Warp-resistant sheet pans and loaf tins for everyday baking.", img:"Bake%20Set.jpg" },
+  { id:"s6", name:"Glass Canister Trio", cat:"Storage", price:3299, desc:"Airtight borosilicate jars with bamboo lids for pantry staples.", img:"Trio.jpg" },
 ];
 
 function App() {
