@@ -1123,10 +1123,17 @@ function App() {
       return () => { offOrders(); offCust(); };
     }
     if (authUid) {
-      // customer: live view of their OWN orders, so the admin's status/delivery updates appear instantly
+      // customer: their orders always come from this device (so they never vanish);
+      // live status/delivery from Firestore is overlaid on top by matching order id.
       const off = FB.db.collection("orders").where("uid","==",authUid).onSnapshot(
-        snap => setOrders(snap.docs.map(d => d.data()).sort((a,b) => (b.ts||0) - (a.ts||0))),
-        err => { console.error(err); loadOrders().then(setOrders); });
+        async (snap) => {
+          const local = await loadOrders();
+          const merged = {};
+          (Array.isArray(local) ? local : []).forEach(o => { if (o && o.id) merged[o.id] = o; });
+          snap.docs.forEach(d => { const o = d.data(); if (o && o.id) merged[o.id] = o; }); // live wins → fresh status/delivery/note
+          setOrders(Object.values(merged).sort((a,b) => (b.ts||0) - (a.ts||0)));
+        },
+        err => { console.error(err); loadOrders().then(o => setOrders(Array.isArray(o) ? o : [])); });
       return () => off();
     }
     (async () => setOrders(await loadOrders()))();
