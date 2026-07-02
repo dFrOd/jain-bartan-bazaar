@@ -1033,6 +1033,7 @@ function App() {
   const [items, setItems] = useState(null);
   const [orders, setOrders] = useState([]);
   const [registeredCustomers, setRegisteredCustomers] = useState([]); // customers who have signed in (Firestore; admin view)
+  const [authUid, setAuthUid] = useState(null); // Firebase auth uid (anonymous for customers) — used for own-order live reads
   const [filter, setFilter] = useState("All");
   const [cart, setCart] = useState([]); // {id, qty}
   const [modal, setModal] = useState(null); // 'cart','login','admin','adminLogin','addItem'
@@ -1081,11 +1082,15 @@ function App() {
           ? { ...DEFAULT_SETTINGS, ...d.data(), categories: (d.data().categories && d.data().categories.length) ? d.data().categories : DEFAULT_CATEGORIES }
           : DEFAULT_SETTINGS),
         err => console.error(err));
-      // admin auth state; seed the shop the first time the owner signs in
-      let seeded = false;
+      // give every visitor an identity: anonymous for customers (so they can read their OWN orders live),
+      // email/password for the admin. Seed the shop the first time the owner signs in.
+      let seeded = false, triedAnon = false;
       const offAuth = FB.auth.onAuthStateChanged(async (u) => {
-        setIsAdmin(!!u && u.email === ADMIN_EMAIL);
-        if (u && u.email === ADMIN_EMAIL && !seeded) {
+        if (!u) { if (!triedAnon) { triedAnon = true; try { await FB.auth.signInAnonymously(); } catch(e){ console.error("anonymous sign-in failed (enable it in Firebase Auth)", e); } } return; }
+        const admin = u.email === ADMIN_EMAIL;
+        setIsAdmin(admin);
+        setAuthUid(u.uid);
+        if (admin && !seeded) {
           seeded = true;
           try {
             const cat = await FB.db.collection("shop").doc("catalog").get();
@@ -1117,8 +1122,15 @@ function App() {
         err => console.error(err));
       return () => { offOrders(); offCust(); };
     }
+    if (authUid) {
+      // customer: live view of their OWN orders, so the admin's status/delivery updates appear instantly
+      const off = FB.db.collection("orders").where("uid","==",authUid).onSnapshot(
+        snap => setOrders(snap.docs.map(d => d.data()).sort((a,b) => (b.ts||0) - (a.ts||0))),
+        err => { console.error(err); loadOrders().then(setOrders); });
+      return () => off();
+    }
     (async () => setOrders(await loadOrders()))();
-  }, [isAdmin]);
+  }, [isAdmin, authUid]);
 
   const showToast = (m) => { setToast(m); setTimeout(()=>setToast(""), 2600); };
   const toggleTheme = () => {
@@ -1183,6 +1195,7 @@ function App() {
     if (t.minOrder > 0 && t.afterDiscount < t.minOrder) { showToast("Minimum order is " + rupees(t.minOrder)); return; }
     const order = {
       id: "o"+Date.now(), ts: Date.now(),
+      uid: (FB.enabled && FB.auth.currentUser) ? FB.auth.currentUser.uid : null,
       customer: user.name || user.email, name: user.name || "", email: user.email, phone: user.phone || "", address: user.address.trim(),
       lines: cartItems.map(x=>({id:x.item.id, name:x.item.name, qty:x.qty, price:finalPrice(x.item, settings)})),
       subtotal: t.subtotal,
