@@ -1123,15 +1123,21 @@ function App() {
       return () => { offOrders(); offCust(); };
     }
     if (authUid) {
-      // customer: their orders always come from this device (so they never vanish);
-      // live status/delivery from Firestore is overlaid on top by matching order id.
+      // customer: keep this device's own orders, overlay live status/delivery from Firestore, and honour admin deletions
       const off = FB.db.collection("orders").where("uid","==",authUid).onSnapshot(
         async (snap) => {
+          const live = {}; snap.docs.forEach(d => { const o = d.data(); if (o && o.id) live[o.id] = o; });
           const local = await loadOrders();
-          const merged = {};
-          (Array.isArray(local) ? local : []).forEach(o => { if (o && o.id) merged[o.id] = o; });
-          snap.docs.forEach(d => { const o = d.data(); if (o && o.id) merged[o.id] = o; }); // live wins → fresh status/delivery/note
-          setOrders(Object.values(merged).sort((a,b) => (b.ts||0) - (a.ts||0)));
+          const result = [];
+          (Array.isArray(local) ? local : []).forEach(o => {
+            if (!o || !o.id) return;
+            if (live[o.id]) result.push(live[o.id]);                 // live version → fresh status/delivery/note
+            else if (o.uid && o.uid === authUid) { /* was ours in the cloud, now gone → admin deleted it → drop */ }
+            else result.push(o);                                     // local-only (older / another device) → keep, never vanish
+          });
+          Object.keys(live).forEach(id => { if (!result.some(o => o.id === id)) result.push(live[id]); });
+          const sorted = result.sort((a,b) => (b.ts||0) - (a.ts||0));
+          setOrders(sorted); saveOrders(sorted);
         },
         err => { console.error(err); loadOrders().then(o => setOrders(Array.isArray(o) ? o : [])); });
       return () => off();
@@ -1243,6 +1249,18 @@ function App() {
         { email:u.email, name:u.name||"", phone:u.phone||"", lastSeen:new Date().toLocaleString(), ts:Date.now() },
         { merge:true });
     } catch(e){ console.error("customer register failed", e); }
+  };
+  // shared handler for both new and returning customer sign-in
+  const customerLogin = (u) => {
+    setUser(u); saveCustomer(u); registerCustomer(u); setModal(null);
+    showToast("Welcome, " + (u.name ? u.name.split(' ')[0] : 'back') + "!");
+  };
+  // admin: delete a single order (removes it live for the admin Inbox and the customer's My Orders)
+  const deleteOrder = async (orderId) => {
+    if (FB.enabled) { try { await FB.db.collection("orders").doc(orderId).delete(); } catch(e){ console.error(e); } showToast("Order deleted"); return; }
+    const next = orders.filter(o => o.id !== orderId);
+    setOrders(next); await saveOrders(next);
+    showToast("Order deleted");
   };
 
   // restore stock when an order is cancelled (matches lines by item id)
@@ -1584,13 +1602,15 @@ function App() {
     modal==='signinChoice' && e(SignInChoice, {
       onClose:()=>setModal(null),
       onCustomer:()=>setModal('login'),
+      onReturning:()=>setModal('existingLogin'),
       onAdmin:()=>setModal('adminLogin')
     }),
     modal==='cart' && e(CartModal, {cartItems, cartTotal, totals, appliedCode, setQty, removeCart, settings,
       onApplyCode:applyCode, onRemoveCode:removeCode,
-      onClose:()=>setModal(null), user, onSignIn:()=>setModal('login'), onPlace:placeOrder,
+      onClose:()=>setModal(null), user, onSignIn:()=>setModal('signinChoice'), onPlace:placeOrder,
       onSaveAddress:saveAddress, onToast:showToast}),
-    modal==='login' && e(LoginModal, {onClose:()=>setModal(null), onLogin:(u)=>{setUser(u);saveCustomer(u);registerCustomer(u);setModal(null);showToast("Welcome, "+u.name.split(' ')[0]);}}),
+    modal==='login' && e(LoginModal, {onClose:()=>setModal(null), onLogin:customerLogin}),
+    modal==='existingLogin' && e(ExistingLogin, {onClose:()=>setModal(null), onLogin:customerLogin, onNew:()=>setModal('login')}),
     modal==='myorders' && e(MyOrders, {orders:myOrders, onReorder:reorder, onClose:()=>{
       setSeenDeliveries(myOrders.filter(o=>o.delivery).map(o=>o.id+o.delivery.sentAt));
       setModal(null);
@@ -1608,7 +1628,7 @@ function App() {
       onDelete:deleteItem, onToggleAvailable:toggleAvailable, onMarkRead:markRead, onChangePin:changePin,
       onPinChanged:()=>showToast("Password updated"),
       onSetDelivery:setDelivery, onDeliverySent:()=>showToast("Delivery time sent to customer"),
-      onSetStatus:setOrderStatus,
+      onSetStatus:setOrderStatus, onDeleteOrder:deleteOrder,
       onUpdateSettings:updateSettings, onSettingsSaved:(m)=>showToast(m||"Saved"),
       onDeleteCustomer:deleteCustomer,
       onExport:exportData, onImport:importData, onExportCSV:exportOrdersCSV,
@@ -1919,17 +1939,25 @@ function MyOrders({orders, onReorder, onClose}) {
   );
 }
 
-function SignInChoice({onClose, onCustomer, onAdmin}) {
+function SignInChoice({onClose, onCustomer, onReturning, onAdmin}) {
   return e('div',{className:'overlay', onClick:onClose},
     e('div',{className:'modal', onClick:ev=>ev.stopPropagation()},
       e('button',{className:'close-x', onClick:onClose}, '×'),
       e('h3', null, 'Sign in'),
       e('p',{className:'sub'}, 'How would you like to continue?'),
+      e('button',{className:'choice-card', onClick:onReturning},
+        e('span',{className:'choice-ic'}, '👋'),
+        e('span', null,
+          e('span',{className:'choice-t'}, 'Returning customer'),
+          e('span',{className:'choice-d'}, 'Ordered before? Sign in quickly with just your email and phone number.')
+        ),
+        e('span',{className:'choice-arrow'}, '→')
+      ),
       e('button',{className:'choice-card', onClick:onCustomer},
         e('span',{className:'choice-ic'}, '🛒'),
         e('span', null,
-          e('span',{className:'choice-t'}, 'Continue as customer'),
-          e('span',{className:'choice-d'}, 'Browse, build a cart, and place an order with just your email.')
+          e('span',{className:'choice-t'}, 'New customer'),
+          e('span',{className:'choice-d'}, 'First time here — sign up with your name, email and phone.')
         ),
         e('span',{className:'choice-arrow'}, '→')
       ),
@@ -1954,7 +1982,7 @@ function LoginModal({onClose, onLogin}) {
     if(!phone.trim()){setErr("Please enter your phone number.");return;}
     const ph=normalizePhone(phone);
     if(!ph){setErr("Enter a valid 10-digit Indian mobile number (starting 6–9).");return;}
-    onLogin({name:name.trim(), email:email.trim(), phone:ph});
+    onLogin({name:name.trim(), email:email.trim().toLowerCase(), phone:ph});
   };
   return e('div',{className:'overlay', onClick:onClose},
     e('div',{className:'modal', onClick:ev=>ev.stopPropagation()},
@@ -1977,6 +2005,47 @@ function LoginModal({onClose, onLogin}) {
         )),
       err && e('div',{className:'err'}, err),
       e('button',{className:'btn-primary', style:{width:'100%'}, onClick:submit}, 'Continue')
+    )
+  );
+}
+
+function ExistingLogin({onClose, onLogin, onNew}) {
+  const [email,setEmail]=useState(""), [phone,setPhone]=useState(""), [err,setErr]=useState(""), [busy,setBusy]=useState(false);
+  const submit=async ()=>{
+    setErr("");
+    const em = email.trim().toLowerCase();
+    if(!isValidEmail(em)){ setErr("Enter a valid email."); return; }
+    const ph = normalizePhone(phone);
+    if(!ph){ setErr("Enter a valid 10-digit mobile number."); return; }
+    if(!FB.enabled){ setErr("Returning sign-in needs a connection — please continue as a new customer."); return; }
+    setBusy(true);
+    try {
+      const doc = await FB.db.collection("customers").doc(em).get();
+      const d = doc.exists ? (doc.data()||{}) : null;
+      if(d && normalizePhone(d.phone) === ph){
+        onLogin({ name: d.name || "", email: d.email || em, phone: ph });
+      } else {
+        setErr("No matching account found. Check your email and phone, or continue as a new customer.");
+        setBusy(false);
+      }
+    } catch(e){ console.error(e); setErr("Couldn’t verify right now — please try again."); setBusy(false); }
+  };
+  return e('div',{className:'overlay', onClick:onClose},
+    e('div',{className:'modal', onClick:ev=>ev.stopPropagation()},
+      e('button',{className:'close-x', onClick:onClose}, '×'),
+      e('h3', null, 'Welcome back'),
+      e('p',{className:'sub'}, 'Sign in with the email and phone number you used before.'),
+      e('div',{className:'field'}, e('label',null,'Email'),
+        e('input',{type:'email', value:email, onChange:ev=>{setEmail(ev.target.value);setErr("");}, placeholder:'you@email.com', autoFocus:true})),
+      e('div',{className:'field'}, e('label',null,'Phone number'),
+        e('div',{style:{display:'flex', alignItems:'stretch'}},
+          e('span',{style:{display:'inline-flex', alignItems:'center', padding:'0 12px', border:'1px solid var(--line)', borderRight:'none', borderRadius:'12px 0 0 12px', background:'var(--surface-2)', color:'var(--muted)', fontSize:14, fontWeight:600}}, '+91'),
+          e('input',{type:'tel', inputMode:'numeric', value:phone,
+            onChange:ev=>{setPhone(ev.target.value);setErr("");}, onKeyDown:ev=>ev.key==='Enter'&&submit(),
+            placeholder:'10-digit mobile number', style:{borderRadius:'0 12px 12px 0'}}))),
+      err && e('div',{className:'err'}, err),
+      e('button',{className:'btn-primary', style:{width:'100%'}, disabled:busy, onClick:submit}, busy?'Checking…':'Sign in'),
+      e('button',{className:'link-btn', style:{width:'100%', marginTop:12}, onClick:onNew}, 'New here? Create an account')
     )
   );
 }
@@ -2008,12 +2077,13 @@ function AdminLogin({adminPin, onClose, onOk}) {
   );
 }
 
-function OrderCard({o, onSetDelivery, onDeliverySent, onSetStatus}) {
+function OrderCard({o, onSetDelivery, onDeliverySent, onSetStatus, onDelete}) {
   const [open,setOpen]=useState(false);
   const [num,setNum]=useState(o.delivery?.num || "");
   const [unit,setUnit]=useState(o.delivery?.unit || "days");
   const [note,setNote]=useState(o.delivery?.note || "");
   const [err,setErr]=useState("");
+  const [confirmDel,setConfirmDel]=useState(false);
   const send = async () => {
     const n = parseInt(num, 10);
     if(isNaN(n) || n<=0){ setErr("Enter a number greater than 0."); return; }
@@ -2088,6 +2158,14 @@ function OrderCard({o, onSetDelivery, onDeliverySent, onSetStatus}) {
               e('button',{className:'btn-primary', style:{flex:1, padding:'9px 14px'}, onClick:send}, 'Send to customer')
             )
           )
+    ),
+    onDelete && e('div',{style:{marginTop:10, textAlign:'right'}},
+      confirmDel
+        ? e('span',{style:{display:'inline-flex', gap:8, alignItems:'center'}},
+            e('span',{style:{fontSize:13, color:'var(--muted)'}}, 'Delete this order?'),
+            e('button',{className:'remove', onClick:()=>{ onDelete(o.id); setConfirmDel(false); }}, 'Yes'),
+            e('button',{className:'link-btn', onClick:()=>setConfirmDel(false)}, 'No'))
+        : e('button',{className:'remove', style:{fontSize:12}, onClick:()=>setConfirmDel(true)}, 'Delete order')
     )
   );
 }
@@ -2340,7 +2418,7 @@ function Overview({items, orders, onExportCSV}) {
   );
 }
 
-function AdminDash({items, orders, unreadCount, settings, customers, onClose, onAdd, onEdit, onDelete, onToggleAvailable, onMarkRead, onChangePin, onPinChanged, onSetDelivery, onDeliverySent, onSetStatus, onUpdateSettings, onSettingsSaved, onDeleteCustomer, onExport, onImport, onExportCSV, onResetPw, onLogout}) {
+function AdminDash({items, orders, unreadCount, settings, customers, onClose, onAdd, onEdit, onDelete, onToggleAvailable, onMarkRead, onChangePin, onPinChanged, onSetDelivery, onDeliverySent, onSetStatus, onDeleteOrder, onUpdateSettings, onSettingsSaved, onDeleteCustomer, onExport, onImport, onExportCSV, onResetPw, onLogout}) {
   const importRef = useRef();
   const [tab,setTab]=useState(unreadCount>0?'orders':'overview');
   const [cur,setCur]=useState(""), [np,setNp]=useState(""), [np2,setNp2]=useState("");
@@ -2405,7 +2483,7 @@ function AdminDash({items, orders, unreadCount, settings, customers, onClose, on
         ? e('div', null,
             orders.length===0
               ? e('div',{style:{padding:'30px 0', color:'var(--muted)', textAlign:'center'}}, 'No orders yet. They’ll show up here the moment a customer confirms.')
-              : orders.map(o=>e(OrderCard, {key:o.id, o, onSetDelivery, onDeliverySent, onSetStatus}))
+              : orders.map(o=>e(OrderCard, {key:o.id, o, onSetDelivery, onDeliverySent, onSetStatus, onDelete:onDeleteOrder}))
           )
         : tab==='customers'
         ? e('div', null,
