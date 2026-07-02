@@ -1032,6 +1032,7 @@ const SEED = [
 function App() {
   const [items, setItems] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [registeredCustomers, setRegisteredCustomers] = useState([]); // customers who have signed in (Firestore; admin view)
   const [filter, setFilter] = useState("All");
   const [cart, setCart] = useState([]); // {id, qty}
   const [modal, setModal] = useState(null); // 'cart','login','admin','adminLogin','addItem'
@@ -1108,10 +1109,13 @@ function App() {
   useEffect(() => {
     if (!FB.enabled) return;
     if (isAdmin) {
-      const off = FB.db.collection("orders").onSnapshot(
+      const offOrders = FB.db.collection("orders").onSnapshot(
         snap => setOrders(snap.docs.map(d => d.data()).sort((a,b) => (b.ts||0) - (a.ts||0))),
         err => console.error(err));
-      return () => off();
+      const offCust = FB.db.collection("customers").onSnapshot(
+        snap => setRegisteredCustomers(snap.docs.map(d => d.data())),
+        err => console.error(err));
+      return () => { offOrders(); offCust(); };
     }
     (async () => setOrders(await loadOrders()))();
   }, [isAdmin]);
@@ -1211,6 +1215,16 @@ function App() {
 
   const saveAddress = (addr) => setUser(u => { const n = {...u, address: addr}; saveCustomer(n); return n; });
 
+  // record a signed-in customer so the shop can see them in the dashboard, even before they order
+  const registerCustomer = async (u) => {
+    if (!FB.enabled || !u || !u.email) return;
+    try {
+      await FB.db.collection("customers").doc(u.email).set(
+        { email:u.email, name:u.name||"", phone:u.phone||"", lastSeen:new Date().toLocaleString(), ts:Date.now() },
+        { merge:true });
+    } catch(e){ console.error("customer register failed", e); }
+  };
+
   // restore stock when an order is cancelled (matches lines by item id)
   const restoreStock = async (lines) => {
     if (!Array.isArray(lines)) return;
@@ -1301,8 +1315,10 @@ function App() {
   };
   const deleteCustomer = async (email) => {
     if (FB.enabled) {
-      const mine = orders.filter(o => o.email === email);
-      if (mine.length) { const b = FB.db.batch(); mine.forEach(o => b.delete(FB.db.collection("orders").doc(o.id))); try { await b.commit(); } catch(e){ console.error(e); } }
+      const b = FB.db.batch();
+      orders.filter(o => o.email === email).forEach(o => b.delete(FB.db.collection("orders").doc(o.id)));
+      b.delete(FB.db.collection("customers").doc(email));
+      try { await b.commit(); } catch(e){ console.error(e); }
       showToast("Customer removed"); return;
     }
     const next = orders.filter(o => o.email !== email);
@@ -1398,6 +1414,12 @@ function App() {
   // derive unique customers from orders (most recent first)
   const customers = (() => {
     const map = {};
+    // customers who have signed in — visible even before they place an order
+    registeredCustomers.forEach(c => {
+      if (!c.email) return;
+      map[c.email] = { email:c.email, name:c.name||"", phone:c.phone||"", orders:0, total:0, last:c.lastSeen||"" };
+    });
+    // fold in order history (also covers older orders from before the customers collection existed)
     orders.forEach(o => {
       if (!map[o.email]) map[o.email] = { email:o.email, name:o.name||"", phone:o.phone||"", orders:0, total:0, last:o.when };
       map[o.email].orders += 1;
@@ -1548,7 +1570,7 @@ function App() {
       onApplyCode:applyCode, onRemoveCode:removeCode,
       onClose:()=>setModal(null), user, onSignIn:()=>setModal('login'), onPlace:placeOrder,
       onSaveAddress:saveAddress, onToast:showToast}),
-    modal==='login' && e(LoginModal, {onClose:()=>setModal(null), onLogin:(u)=>{setUser(u);saveCustomer(u);setModal(null);showToast("Welcome, "+u.name.split(' ')[0]);}}),
+    modal==='login' && e(LoginModal, {onClose:()=>setModal(null), onLogin:(u)=>{setUser(u);saveCustomer(u);registerCustomer(u);setModal(null);showToast("Welcome, "+u.name.split(' ')[0]);}}),
     modal==='myorders' && e(MyOrders, {orders:myOrders, onReorder:reorder, onClose:()=>{
       setSeenDeliveries(myOrders.filter(o=>o.delivery).map(o=>o.id+o.delivery.sentAt));
       setModal(null);
@@ -2374,7 +2396,8 @@ function AdminDash({items, orders, unreadCount, settings, customers, onClose, on
                   e('div',{className:'ai-info'},
                     e('div',{className:'ai-name'}, c.name || c.email),
                     e('div',{className:'ai-meta'},
-                      [c.name?c.email:null, c.phone?fmtPhone(c.phone):null, c.orders+' order'+(c.orders===1?'':'s'), rupees(c.total)].filter(Boolean).join(' · '))
+                      [c.name?c.email:null, c.phone?fmtPhone(c.phone):null,
+                        c.orders>0 ? (c.orders+' order'+(c.orders===1?'':'s')+' · '+rupees(c.total)) : 'No orders yet'].filter(Boolean).join(' · '))
                   ),
                   confirmDel===c.email
                     ? e('span',{style:{display:'inline-flex', gap:8, alignItems:'center'}},
