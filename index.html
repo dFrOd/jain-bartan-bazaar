@@ -74,8 +74,11 @@
       radial-gradient(900px 500px at -10% 10%, rgba(232,115,46,.12), transparent 55%),
       radial-gradient(760px 760px at 50% 118%, rgba(217,162,75,.10), transparent 60%),
       var(--bg);
-    background-attachment: fixed;
+    background-repeat: no-repeat;   /* was background-attachment:fixed — that's buggy on iOS Safari */
+    background-color: var(--bg);
     min-height: 100vh;
+    min-height: 100dvh;             /* accounts for iOS Safari's dynamic toolbar */
+    -webkit-text-size-adjust: 100%; /* stop iOS from auto-inflating text */
     -webkit-font-smoothing: antialiased;
   }
 
@@ -722,6 +725,20 @@
     .footer .f-grid { gap: 22px 30px; }
     .toast { max-width: calc(100vw - 24px); }
     .pd-hero .ph { font-size: 72px; }
+    /* compact header + hero so they don't crowd on a phone */
+    .bar { min-height: 60px; gap: 8px 10px; padding: 10px 0; }
+    .logo { gap: 9px; flex-shrink: 0; }
+    .logo .crest { width: 42px; height: 42px; border-radius: 12px; }
+    /* controls drop onto their own full-width row so they never overflow sideways */
+    nav { flex: 1 1 100%; }
+    .actions { gap: 6px; margin-left: auto; }
+    .icon-btn { padding: 8px 10px; font-size: 13px; gap: 5px; }
+    .btn-primary { padding: 9px 14px; font-size: 13px; }
+    .hero { padding: 30px 0 34px; }
+    .hero h1 { font-size: clamp(23px, 6.5vw, 34px); }
+    .hero p { font-size: 15px; }
+    .hero .hero-stats { gap: 18px; margin-top: 20px; }
+    .hero-deco { font-size: 210px; right: -20px; }
   }
   /* 16px form text stops iOS Safari from zooming in when a field gets focus */
   @media (max-width: 480px) {
