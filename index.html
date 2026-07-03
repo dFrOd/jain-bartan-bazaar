@@ -1303,11 +1303,18 @@ function App() {
     lines.forEach(l => { next = next.map(it => (l.id && it.id===l.id && itemStock(it)!=null) ? {...it, stock: it.stock + (l.qty||0)} : it); });
     setItems(next); await saveItems(next);
   };
-  // customer: cancel/delete their OWN order (rules allow deleting an order whose uid matches theirs)
+  // customer: cancel their OWN order — only while it's still "New" — and put the stock back
   const customerDeleteOrder = async (orderId) => {
-    if (FB.enabled) { try { await FB.db.collection("orders").doc(orderId).delete(); } catch(e){ console.error(e); showToast("Couldn’t cancel — please try again"); return; } }
-    else { const next = orders.filter(o => o.id !== orderId); setOrders(next); await saveOrders(next); }
-    showToast("Order cancelled");
+    const o = orders.find(x => x.id === orderId);
+    if (o && orderStatus(o) !== "new") { showToast("This order is already being processed — please message the shop to change it."); return; }
+    if (FB.enabled) {
+      try { await FB.db.collection("orders").doc(orderId).delete(); } catch(e){ console.error(e); showToast("Couldn’t cancel — please try again"); return; }
+      if (o) await restoreStock(o.lines);   // add the stock back
+    } else {
+      const next = orders.filter(x => x.id !== orderId); setOrders(next); await saveOrders(next);
+      if (o) await restoreStock(o.lines);
+    }
+    showToast("Order cancelled — stock updated");
   };
   const setOrderStatus = async (orderId, status) => {
     const o = orders.find(x=>x.id===orderId);
@@ -1979,7 +1986,7 @@ function MyOrders({orders, onReorder, onDeleteOrder, onClose}) {
                 e('span', null, 'Total'), e('span', null, rupees(o.total))),
               e('div',{style:{display:'flex', gap:8, marginTop:12, flexWrap:'wrap'}},
                 onReorder && e('button',{className:'btn-ghost', style:{flex:1}, onClick:()=>onReorder(o)}, '🔁 Order again'),
-                onDeleteOrder && (confirmDelId===o.id
+                onDeleteOrder && st==='new' && (confirmDelId===o.id
                   ? e('span',{style:{display:'inline-flex', gap:8, alignItems:'center', flex:1, justifyContent:'center'}},
                       e('span',{style:{fontSize:13, color:'var(--muted)'}}, 'Cancel this order?'),
                       e('button',{className:'remove', onClick:()=>{ onDeleteOrder(o.id); setConfirmDelId(null); }}, 'Yes'),
