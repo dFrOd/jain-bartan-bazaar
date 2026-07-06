@@ -798,8 +798,8 @@ const FALLBACK_EMOJI = "🍴";
 const DEFAULT_PIN = "admin123"; // initial admin password — change it from the dashboard
 const DEFAULT_SETTINGS = {
   logo: null, categories: DEFAULT_CATEGORIES, promo: null, codes: [],
-  shop: { phone:"9987687723", whatsapp:"9987687723", address:"Bhandup West, Mumbai", hours:"Open 8 AM – 8 PM", maps:"https://maps.app.goo.gl/p9mpYxC4tWteExAx5" },
-  charges: { deliveryFee:50, freeAbove:150, minOrder:0, gstPercent:18 },
+  shop: { phone:"9167972686", whatsapp:"9167972686", address:"Bhandup West, Mumbai", hours:"Open 8 AM – 6 PM", maps:"https://maps.app.goo.gl/p9mpYxC4tWteExAx5" },
+  charges: { deliveryFee:50, freeAbove:500, minOrder:0, gstPercent:18 },
 };
 // promo shape: { text, on, percent } — banner text + a store-wide % off all items when on
 // codes shape: [{ code, percent, active }] — discount codes a customer can enter in the cart
@@ -826,11 +826,29 @@ async function loadSettings() {
       categories: (s.categories && s.categories.length) ? s.categories : DEFAULT_CATEGORIES };
   } catch { return DEFAULT_SETTINGS; }
 }
+// Firestore caps any single document at 1 MiB. Product photos (and the logo) are stored as
+// base64 INSIDE the shop/catalog & shop/settings docs, so we measure the write, block it before
+// it would fail, and warn as the doc fills up. Returns a status the caller can act on.
+const FS_DOC_LIMIT = 1048576;   // Firestore hard limit, bytes
+const DOC_MAX_BYTES = 1000000;  // block writes above this (leaves headroom for field-name overhead)
+const DOC_WARN_BYTES = 850000;  // warn the admin once the doc is this full
+function docBytes(obj) { try { return new Blob([JSON.stringify(obj)]).size; } catch { return 0; } }
+function kb(b) { return Math.round((b || 0) / 1024) + " KB"; }
+function pctFull(b) { return Math.round((b || 0) / FS_DOC_LIMIT * 100); }
+// a base64-embedded photo (counts toward the 1 MiB doc limit) vs. an external link/repo path (free)
+function isDataUrl(s) { return typeof s === "string" && s.slice(0, 5) === "data:"; }
+
 async function saveSettings(s) {
   try {
-    if (FB.enabled) { await FB.db.collection("shop").doc("settings").set(s); return; }
+    if (FB.enabled) {
+      const bytes = docBytes(s);
+      if (bytes > DOC_MAX_BYTES) return { ok:false, tooLarge:true, bytes };
+      await FB.db.collection("shop").doc("settings").set(s);
+      return { ok:true, bytes, near: bytes > DOC_WARN_BYTES };
+    }
     await window.storage.set("store:settings", JSON.stringify(s), true);
-  } catch(e){ console.error(e); }
+    return { ok:true };
+  } catch(e){ console.error(e); return { ok:false, error:e }; }
 }
 async function loadItems() {
   try {
@@ -841,9 +859,16 @@ async function loadItems() {
 }
 async function saveItems(items) {
   try {
-    if (FB.enabled) { await FB.db.collection("shop").doc("catalog").set({ items }); return; }
+    if (FB.enabled) {
+      const payload = { items };
+      const bytes = docBytes(payload);
+      if (bytes > DOC_MAX_BYTES) return { ok:false, tooLarge:true, bytes };
+      await FB.db.collection("shop").doc("catalog").set(payload);
+      return { ok:true, bytes, near: bytes > DOC_WARN_BYTES };
+    }
     await window.storage.set("store:items", JSON.stringify(items), true);
-  } catch(e){ console.error(e); }
+    return { ok:true };
+  } catch(e){ console.error(e); return { ok:false, error:e }; }
 }
 async function loadOrders() {
   try {
@@ -1377,8 +1402,17 @@ function App() {
     const isEdit = data.id && items.find(i=>i.id===data.id);
     const id = isEdit ? data.id : "i"+Date.now();
     const item = {...data, id};
+    const prev = items;
     const next = isEdit ? items.map(i=>i.id===id?item:i) : [item, ...items];
-    setItems(next); await saveItems(next);
+    setItems(next);
+    const res = await saveItems(next);
+    if (res && res.ok === false) {
+      setItems(prev); // the write failed — roll back so nothing looks saved when it isn't
+      showToast(res.tooLarge
+        ? "Couldn’t save — photos exceed the 1 MB limit ("+kb(res.bytes)+" of catalog). Use a smaller image or remove one."
+        : "Couldn’t save — check your connection and try again.");
+      return; // keep the editor open so the owner can fix it
+    }
     // mirror the admin-set stock to the live per-item stock collection (blank = untracked → remove)
     if (FB.enabled) {
       try {
@@ -1387,7 +1421,9 @@ function App() {
       } catch(e){ console.error("stock save failed", e); }
     }
     setModal(null); setEditItem(null);
-    showToast("Item saved");
+    showToast(res && res.near
+      ? "Item saved — catalog is "+pctFull(res.bytes)+"% of the 1 MB limit; add photos sparingly."
+      : "Item saved");
   };
   const deleteItem = async (id) => {
     const next = items.filter(i=>i.id!==id);
@@ -1421,8 +1457,16 @@ function App() {
     return null; // success
   };
   const updateSettings = async (patch) => {
+    const prev = settings;
     const next = { ...settings, ...patch };
-    setSettings(next); await saveSettings(next);
+    setSettings(next);
+    const res = await saveSettings(next);
+    if (res && res.ok === false) {
+      setSettings(prev); // write failed — roll back so the change doesn't look applied
+      showToast(res.tooLarge
+        ? "Couldn’t save — logo/details exceed the 1 MB limit. Use a smaller logo."
+        : "Couldn’t save — check your connection and try again.");
+    }
   };
   const deleteCustomer = async (email) => {
     if (FB.enabled) {
@@ -1508,12 +1552,16 @@ function App() {
           showToast("That file isn’t a valid store backup");
           return;
         }
-        setItems(data.items); await saveItems(data.items);
+        setItems(data.items); const ri = await saveItems(data.items);
         const ords = Array.isArray(data.orders) ? data.orders : [];
         setOrders(ords); await saveOrders(ords);
         const sett = data.settings ? { ...DEFAULT_SETTINGS, ...data.settings } : DEFAULT_SETTINGS;
-        setSettings(sett); await saveSettings(sett);
+        setSettings(sett); const rs = await saveSettings(sett);
         if (data.adminPin) { setAdminPin(data.adminPin); await savePin(data.adminPin); }
+        if ((ri && ri.ok === false) || (rs && rs.ok === false)) {
+          showToast("Restored on this device, but couldn’t sync — the backup exceeds the 1 MB limit.");
+          return;
+        }
         showToast("Backup restored");
       } catch (err) {
         showToast("Couldn’t read that file");
@@ -2722,6 +2770,7 @@ function ItemForm({existing, categories, onClose, onSave}) {
   const [stock,setStock]=useState(existing && existing.stock!=null ? String(existing.stock) : "");
   const [available,setAvailable]=useState(existing ? existing.available!==false : true);
   const [rawImg,setRawImg]=useState(null); // image awaiting adjustment
+  const [imgErr,setImgErr]=useState(false); // an external image link failed to load
   const [err,setErr]=useState("");
   const fileRef=useRef();
 
@@ -2752,7 +2801,7 @@ function ItemForm({existing, categories, onClose, onSave}) {
     e('div',{className:'modal', onClick:ev=>ev.stopPropagation()},
       e('button',{className:'close-x', onClick:onClose}, '×'),
       e('h3', null, existing?'Edit item':'Add new item'),
-      e('p',{className:'sub'}, 'Fill in the details, set an optional discount, and upload a photo.'),
+      e('p',{className:'sub'}, 'Fill in the details, set an optional discount, and add a photo (paste a link or upload).'),
       e('div',{className:'field'}, e('label',null,'Name'),
         e('input',{value:name, onChange:ev=>setName(ev.target.value), placeholder:'e.g. Cast Iron Skillet'})),
       e('div',{className:'field'}, e('label',null,'Category'),
@@ -2781,10 +2830,17 @@ function ItemForm({existing, categories, onClose, onSave}) {
           e('div',{style:{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}},
             e('label',{className:'file-label'}, img?'Change photo':'Upload photo',
               e('input',{ref:fileRef, type:'file', accept:'image/*', style:{display:'none'}, onChange:pick})),
-            img && e('button',{className:'link-btn', onClick:()=>setRawImg(img)}, 'Adjust photo'),
-            img && e('button',{className:'remove', onClick:()=>setImg(null)}, 'Remove')
+            img && isDataUrl(img) && e('button',{className:'link-btn', onClick:()=>setRawImg(img)}, 'Adjust photo'),
+            img && e('button',{className:'remove', onClick:()=>{ setImg(null); setImgErr(false); }}, 'Remove')
           ),
-          img && e('img',{className:'img-preview', src:img}))),
+          e('div',{style:{marginTop:10}},
+            e('input',{type:'url', value:(img && !isDataUrl(img)) ? img : "",
+              onChange:ev=>{ setImgErr(false); setImg(ev.target.value.trim() || null); },
+              placeholder:'…or paste an image link (https://…)'}),
+            e('div',{style:{fontSize:12, color:'var(--muted)', marginTop:6, lineHeight:1.4}},
+              'Recommended: upload the photo to your GitHub repo and paste its link here — it keeps the store fast and never counts toward the 1 MB limit. Uploading from your device embeds the image instead (counts toward the limit).')),
+          imgErr && e('div',{className:'err', style:{marginTop:8}}, 'That image link didn’t load — double-check the URL.'),
+          img && e('img',{className:'img-preview', src:img, onError:()=>setImgErr(true), onLoad:()=>setImgErr(false)}))),
       err && e('div',{className:'err'}, err),
       e('div',{className:'modal-actions'},
         e('button',{className:'btn-ghost', onClick:onClose}, 'Cancel'),
