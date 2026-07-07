@@ -1335,10 +1335,9 @@ function App() {
   };
 
   const goHome = () => {
-    setFilter("All");
-    setSearch("");
-    setModal(null);
-    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+    // clicking the shop name refreshes the app: drop any deep-link (#p=…) hash, then reload fresh
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+    window.location.reload();
   };
 
   const refreshOrders = async () => setOrders(await loadOrders());
@@ -1766,7 +1765,7 @@ function App() {
     e('header', null,
       e('div', {className:'wrap'},
         e('div', {className:'bar'},
-          e('div', {className:'logo', onClick:goHome},
+          e('div', {className:'logo', onClick:goHome, title:'Refresh'},
             e('span',{className:'crest'+((settings.logo && !logoBroken)?' has-img':'')},
               (settings.logo && !logoBroken) ? e('img',{src:settings.logo, alt:'Logo', onError:()=>setLogoBroken(true)}) : e(LogoMark)),
             e('span', null,
