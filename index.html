@@ -602,6 +602,36 @@
   .stock-badge.out { background: var(--danger); }
   .stock-low { font-size: 12px; color: var(--danger); font-weight: 600; }
   .stock-ok { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .share-fab {
+    position: absolute; bottom: 10px; right: 10px; width: 34px; height: 34px;
+    border-radius: 50%; background: rgba(28,24,20,.82); color: #f3ead9; border: none;
+    font-size: 15px; line-height: 1; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; transition: background .15s ease, transform .15s ease; z-index: 2;
+  }
+  .share-fab:hover { background: #25d366; color: #fff; transform: scale(1.08); }
+  /* New / Bestseller badge */
+  .item-badge {
+    display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; padding: 3px 9px; border-radius: 999px;
+  }
+  .item-badge.new { background: #1f9d55; color: #fff; }
+  .item-badge.best { background: linear-gradient(90deg,#e8a13a,#d98324); color: #3a2413; }
+  /* Product photo gallery (in the detail modal) */
+  .gallery-wrap { position: absolute; inset: 0; }
+  .gallery-strip { display: flex; height: 100%; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .gallery-strip::-webkit-scrollbar { display: none; }
+  .gallery-slide { flex: 0 0 100%; height: 100%; scroll-snap-align: center; }
+  .gallery-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gal-arrow {
+    position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px;
+    border-radius: 50%; border: none; background: rgba(28,24,20,.55); color: #fff; font-size: 22px;
+    line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 3;
+  }
+  .gal-arrow:hover { background: rgba(28,24,20,.8); }
+  .gal-arrow.left { left: 10px; } .gal-arrow.right { right: 10px; }
+  .gallery-dots { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; justify-content: center; gap: 6px; z-index: 3; }
+  .gallery-dots .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.5); cursor: pointer; transition: all .15s; }
+  .gallery-dots .dot.active { background: #fff; width: 9px; height: 9px; }
   .card.is-out .thumb { opacity: .65; }
   .add-btn:disabled { opacity: .55; cursor: not-allowed; }
   .add-btn:disabled:hover { background: var(--ink); transform: none; }
@@ -882,6 +912,31 @@ async function loadOrders() {
 async function saveOrders(orders) {
   try { await window.storage.set("store:orders", JSON.stringify(orders), true); } catch(e){ console.error(e); }
 }
+// reviews (localStorage fallback only — Firebase uses the "reviews" collection)
+async function loadReviewsLocal() {
+  try { const r = await window.storage.get("store:reviews", true); return r ? JSON.parse(r.value) : []; } catch { return []; }
+}
+async function saveReviewsLocal(v) {
+  try { await window.storage.set("store:reviews", JSON.stringify(v), true); } catch(e){ console.error(e); }
+}
+// average approved rating for an item → { count, avg }
+function ratingSummary(reviews, itemId) {
+  const rs = (reviews || []).filter(r => r.itemId === itemId && r.approved === true);
+  if (!rs.length) return { count: 0, avg: 0 };
+  const avg = rs.reduce((s, r) => s + (Number(r.rating) || 0), 0) / rs.length;
+  return { count: rs.length, avg: Math.round(avg * 10) / 10 };
+}
+// all photos for an item (falls back to the single img for older items); img stays = images[0]
+function itemImages(it) {
+  if (it && Array.isArray(it.images) && it.images.length) return it.images.filter(Boolean);
+  return (it && it.img) ? [it.img] : [];
+}
+// New / Bestseller highlight badge → display info (or null)
+function badgeInfo(b) {
+  if (b === 'new') return { cls: 'new', label: 'New' };
+  if (b === 'bestseller') return { cls: 'best', label: 'Bestseller' };
+  return null;
+}
 async function loadTheme() {
   try {
     const r = await window.storage.get("ui:theme", true);
@@ -971,6 +1026,22 @@ const STATUS_META = {
 function orderStatus(o) { return (o && o.status) || "new"; }
 function statusLabel(k) { return (STATUS_META[k] || STATUS_META.new).label; }
 function nextStatus(k) { const i = ORDER_FLOW.indexOf(k); return (i >= 0 && i < ORDER_FLOW.length - 1) ? ORDER_FLOW[i + 1] : null; }
+// friendly WhatsApp message the admin can send a customer about their order status
+function statusUpdateText(o) {
+  const st = orderStatus(o);
+  const eta = o.delivery ? (o.delivery.num + " " + (o.delivery.num === 1 ? o.delivery.unit.replace(/s$/, "") : o.delivery.unit)) : null;
+  const items = (o.lines || []).map(l => l.qty + " × " + l.name).join(", ");
+  const body = {
+    new: "We've received your order and will confirm it shortly.",
+    accepted: "Good news — your order is confirmed and we're preparing it" + (eta ? (". Expected in " + eta + ".") : "."),
+    packed: "Your order is packed and ready" + (eta ? (" — arriving in " + eta + ".") : "."),
+    out: "Your order is out for delivery" + (eta ? (", arriving in " + eta) : "") + " 🚚",
+    delivered: "Your order has been delivered. Thank you for shopping with us! 🙏",
+    cancelled: "Your order has been cancelled. Do reach out if you have any questions."
+  };
+  return (o.name ? ("Hello " + o.name + ",\n\n") : "Hello,\n\n") +
+    (body[st] || body.new) + (items ? ("\n\nOrder: " + items) : "") + "\n— Maa Santoshi Steel Center";
+}
 
 // ---- stock / availability ----
 function itemStock(it) { const s = it && it.stock; if (s === null || s === undefined || s === "") return null; const n = Number(s); return Number.isFinite(n) ? n : null; } // null = untracked (always available)
@@ -995,12 +1066,21 @@ function computeTotals(subtotal, settings, codePercent) {
   const afterDiscount = Math.max(0, subtotal - codeDiscount);
   const deliveryFee = afterDiscount <= 0 ? 0
     : (ch.freeAbove > 0 && afterDiscount >= ch.freeAbove ? 0 : ch.deliveryFee);
-  const gstAmount = ch.gstPercent > 0 ? Math.round(afterDiscount * ch.gstPercent / 100) : 0;
+  // prices are GST-inclusive: gstAmount is the tax ALREADY contained in the goods price (shown for transparency, NOT added on top)
+  const gstAmount = ch.gstPercent > 0 ? Math.round(afterDiscount * ch.gstPercent / (100 + ch.gstPercent)) : 0;
   return { subtotal, codeDiscount, afterDiscount, deliveryFee, gstAmount,
     gstPercent: ch.gstPercent, freeAbove: ch.freeAbove, minOrder: ch.minOrder,
-    total: afterDiscount + deliveryFee + gstAmount };
+    total: afterDiscount + deliveryFee };
 }
 
+// share a product to WhatsApp with a deep link (#p=<id>) that reopens it on the site
+function shareItemWA(it, settings) {
+  const base = location.origin + location.pathname;
+  const url = base + "#p=" + encodeURIComponent(it.id);
+  const msg = "*" + it.name + "* — " + rupees(finalPrice(it, settings)) +
+    "\nAt Maa Santoshi Steel Center 🍳\n" + url;
+  window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank", "noopener");
+}
 // ---- WhatsApp ordering ----
 function waLink(num10, text) {
   const d = (num10 || "").replace(/\D/g, "").slice(-10);
@@ -1013,7 +1093,7 @@ function orderToText(order, settings) {
     "\n\nSubtotal: " + rupees(order.subtotal != null ? order.subtotal : order.total);
   if (order.codeDiscount) t += "\nCode " + order.code + " (-" + order.codePercent + "%): -" + rupees(order.codeDiscount);
   if (order.deliveryFee) t += "\nDelivery: " + rupees(order.deliveryFee);
-  if (order.gstAmount) t += "\nGST (" + order.gstPercent + "%): " + rupees(order.gstAmount);
+  if (order.gstAmount) t += "\n(incl. GST " + order.gstPercent + "%: " + rupees(order.gstAmount) + ")";
   t += "\nTotal: " + rupees(order.total) + "\n\nName: " + (order.name || order.customer || "");
   if (order.phone) t += "\nPhone: " + fmtPhone(order.phone);
   if (order.address) t += "\nDeliver to: " + order.address;
@@ -1066,6 +1146,7 @@ function App() {
   const [authUid, setAuthUid] = useState(null); // Firebase auth uid (anonymous for customers) — used for own-order live reads
   const catalogItemsRef = useRef(null); // latest catalog (FB) for merging live stock counts
   const stockMapRef = useRef({});        // latest live stock counts by item id
+  const deepLinkedRef = useRef(false);   // guard: only auto-open a shared #p=<id> product once
   const [filter, setFilter] = useState("All");
   const [cart, setCart] = useState([]); // {id, qty}
   const [modal, setModal] = useState(null); // 'cart','login','admin','adminLogin','addItem'
@@ -1081,11 +1162,21 @@ function App() {
   const [appliedCode, setAppliedCode] = useState(null); // {code, percent} entered by the customer in the cart
   const [theme, setTheme] = useState("light"); // 'light' | 'dark' — customer-selectable
   const [viewItem, setViewItem] = useState(null); // product open in the detail modal
+  const [reviews, setReviews] = useState([]); // product reviews (approved-only for customers; all for admin)
   const [sort, setSort] = useState("featured");   // catalog sort order
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [logoBroken, setLogoBroken] = useState(false); // header logo URL failed to load → fall back to the crest mark
   useEffect(() => { setLogoBroken(false); }, [settings.logo]); // give a newly-set logo a fresh chance to load
+  // open a shared product (deep link #p=<id>) once the catalog has loaded
+  useEffect(() => {
+    if (deepLinkedRef.current || !Array.isArray(items)) return;
+    deepLinkedRef.current = true;
+    const m = (location.hash || "").match(/^#p=([^&]+)/);
+    if (!m) return;
+    const it = items.find(x => x.id === decodeURIComponent(m[1]));
+    if (it) { setViewItem(it); setModal('product'); }
+  }, [items]);
 
   useEffect(() => {
     (async () => {
@@ -1204,6 +1295,17 @@ function App() {
     }
     (async () => setOrders(await loadOrders()))();
   }, [isAdmin, authUid]);
+
+  // reviews: admin streams ALL (to moderate); customers stream only approved ones (rules enforce this)
+  useEffect(() => {
+    if (!FB.enabled) { loadReviewsLocal().then(r => setReviews(Array.isArray(r) ? r : [])); return; }
+    const col = FB.db.collection("reviews");
+    const q = isAdmin ? col : col.where("approved", "==", true);
+    const off = q.onSnapshot(
+      snap => setReviews(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error("reviews listen failed", err));
+    return () => off();
+  }, [isAdmin]);
 
   // one-time migration: create a live stock/{id} doc for any item that has a stock number
   // in the catalog but no stock doc yet (only the admin may create these). Idempotent —
@@ -1491,6 +1593,28 @@ function App() {
         : "Couldn’t save — check your connection and try again.");
     }
   };
+  // reviews: customers submit (pending approval); admin approves / removes
+  const submitReview = async (itemId, name, rating, text) => {
+    const r = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+    if (!r) { showToast("Please pick a star rating"); return false; }
+    const rev = { itemId, name: (name || "").trim() || "Customer", rating: r,
+      text: (text || "").trim(), ts: new Date().toISOString(), approved: false };
+    if (FB.enabled) {
+      try { await FB.db.collection("reviews").add(rev); showToast("Thanks! Your review will show once approved."); return true; }
+      catch (e) { console.error("review submit failed", e); showToast("Couldn’t submit review"); return false; }
+    }
+    const local = { ...rev, id: "r" + Date.now(), approved: true }; // no moderation backend offline → show now
+    const next = [local, ...reviews]; setReviews(next); saveReviewsLocal(next);
+    showToast("Thanks for your review!"); return true;
+  };
+  const approveReview = async (id) => {
+    if (FB.enabled) { try { await FB.db.collection("reviews").doc(id).update({ approved: true }); showToast("Review approved"); } catch (e) { console.error(e); showToast("Couldn’t approve"); } return; }
+    const next = reviews.map(r => r.id === id ? { ...r, approved: true } : r); setReviews(next); saveReviewsLocal(next); showToast("Review approved");
+  };
+  const deleteReview = async (id) => {
+    if (FB.enabled) { try { await FB.db.collection("reviews").doc(id).delete(); showToast("Review removed"); } catch (e) { console.error(e); showToast("Couldn’t remove"); } return; }
+    const next = reviews.filter(r => r.id !== id); setReviews(next); saveReviewsLocal(next); showToast("Review removed");
+  };
   const deleteCustomer = async (email) => {
     if (FB.enabled) {
       const b = FB.db.batch();
@@ -1738,7 +1862,7 @@ function App() {
             shown.length===0
               ? e('div',{className:'empty'}, e('div',{className:'big'}, q?'🔍':'🍽'),
                   q ? ('No items match “'+search.trim()+'”.') : 'Nothing here yet. Check back soon.')
-              : shown.map(it => e(Card, {key:it.id, it, settings, onAdd:()=>addToCart(it.id), onView:()=>{setViewItem(it); setModal('product');}}))
+              : shown.map(it => e(Card, {key:it.id, it, settings, reviews, onAdd:()=>addToCart(it.id), onView:()=>{setViewItem(it); setModal('product');}}))
           )
     ),
     e(Footer, {settings}),
@@ -1760,12 +1884,14 @@ function App() {
       setModal(null);
     }}),
     modal==='product' && viewItem && e(ProductModal, {
-      it: (items||[]).find(i=>i.id===viewItem.id) || viewItem, settings,
+      it: (items||[]).find(i=>i.id===viewItem.id) || viewItem, settings, reviews,
       inCartQty: (cart.find(x=>x.id===viewItem.id)||{}).qty || 0,
       onAdd:(id,n)=>{ addToCart(id,n); setModal(null); },
+      onSubmitReview:submitReview,
       onClose:()=>setModal(null)}),
     modal==='adminLogin' && e(AdminLogin, {adminPin, onClose:()=>setModal(null), onOk:()=>{setIsAdmin(true);setModal('admin');showToast("Admin mode on");}}),
-    modal==='admin' && e(AdminDash, {items:items||[], orders, unreadCount, settings, customers,
+    modal==='admin' && e(AdminDash, {items:items||[], orders, unreadCount, settings, customers, reviews,
+      onApproveReview:approveReview, onDeleteReview:deleteReview,
       onClose:()=>setModal(null),
       onAdd:()=>{setEditItem(null);setModal('addItem');},
       onEdit:(it)=>{setEditItem(it);setModal('addItem');},
@@ -1783,7 +1909,45 @@ function App() {
   );
 }
 
-function Card({it, settings, onAdd, onView}) {
+// swipeable product photo gallery (native scroll-snap + arrows + dots)
+function Gallery({ imgs, alt }) {
+  const [idx, setIdx] = useState(0);
+  const ref = useRef(null);
+  const n = imgs.length;
+  if (n <= 1) return e('img', { src: imgs[0], alt: alt });
+  const go = (i) => {
+    const k = Math.max(0, Math.min(n - 1, i));
+    const el = ref.current;
+    if (el) el.scrollTo({ left: k * el.clientWidth, behavior: 'smooth' });
+    setIdx(k);
+  };
+  const onScroll = () => {
+    const el = ref.current; if (!el) return;
+    const k = Math.round(el.scrollLeft / el.clientWidth);
+    if (k !== idx) setIdx(k);
+  };
+  return e('div', { className: 'gallery-wrap' },
+    e('div', { className: 'gallery-strip', ref: ref, onScroll: onScroll },
+      imgs.map((src, i) => e('div', { key: i, className: 'gallery-slide' }, e('img', { src: src, alt: alt })))),
+    e('button', { className: 'gal-arrow left', style: { visibility: idx <= 0 ? 'hidden' : 'visible' },
+      onClick: (ev) => { ev.stopPropagation(); go(idx - 1); } }, '‹'),
+    e('button', { className: 'gal-arrow right', style: { visibility: idx >= n - 1 ? 'hidden' : 'visible' },
+      onClick: (ev) => { ev.stopPropagation(); go(idx + 1); } }, '›'),
+    e('div', { className: 'gallery-dots' },
+      imgs.map((_, i) => e('span', { key: i, className: 'dot' + (i === idx ? ' active' : ''),
+        onClick: (ev) => { ev.stopPropagation(); go(i); } })))
+  );
+}
+
+// read-only star display (rounds to nearest whole star)
+function Stars({ value, size }) {
+  const full = Math.round(value || 0);
+  let str = "";
+  for (let i = 1; i <= 5; i++) str += (i <= full ? "★" : "☆");
+  return e('span', { style: { color: '#e8a13a', fontSize: (size || 14) + 'px', letterSpacing: '1px', lineHeight: 1 } }, str);
+}
+
+function Card({it, settings, reviews, onAdd, onView}) {
   const d = effectiveDiscount(it, settings);
   const disc = d > 0;
   const stock = itemStock(it);
@@ -1794,10 +1958,17 @@ function Card({it, settings, onAdd, onView}) {
       it.img ? e('img',{src:it.img, alt:it.name}) : e('span',{className:'ph'}, catEmoji(it.cat)),
       e('span',{className:'pill'}, it.cat),
       disc && e('span',{className:'disc-badge'}, '-'+d+'%'),
-      out && e('span',{className:'stock-badge out'}, 'Out of stock')
+      out && e('span',{className:'stock-badge out'}, 'Out of stock'),
+      e('button',{className:'share-fab', title:'Share on WhatsApp',
+        onClick:ev=>{ ev.stopPropagation(); shareItemWA(it, settings); }}, '↗')
     ),
     e('div',{className:'body'},
+      (() => { const b = badgeInfo(it.badge); return b && e('div',{style:{marginBottom:6}}, e('span',{className:'item-badge '+b.cls}, b.label)); })(),
       e('div',{className:'name'}, it.name),
+      (() => { const rs = ratingSummary(reviews, it.id); return rs.count>0 &&
+        e('div',{style:{display:'flex', alignItems:'center', gap:6, margin:'1px 0 5px'}},
+          e(Stars,{value:rs.avg, size:13}),
+          e('span',{style:{fontSize:12, color:'var(--muted)'}}, rs.avg+' ('+rs.count+')')); })(),
       e('div',{className:'desc'}, it.desc),
       stock != null && !out && stock <= 10 && e('div',{className: low ? 'stock-low' : 'stock-ok'},
         low ? ('Only '+stock+' left') : (stock+' in stock')),
@@ -1815,25 +1986,44 @@ function Card({it, settings, onAdd, onView}) {
   );
 }
 
-function ProductModal({it, settings, inCartQty, onAdd, onClose}) {
+function ProductModal({it, settings, reviews, inCartQty, onAdd, onSubmitReview, onClose}) {
   const d = effectiveDiscount(it, settings);
   const disc = d > 0;
+  const imgs = itemImages(it);
+  const bInfo = badgeInfo(it.badge);
   const stock = itemStock(it);
   const out = stock != null && stock <= 0;
   const remaining = stock != null ? Math.max(0, stock - inCartQty) : null;
   const cap = remaining != null ? Math.max(1, remaining) : 99;
   const [qty, setQty] = useState(1);
   const q = Math.min(qty, cap);
+  const rs = ratingSummary(reviews, it.id);
+  const itemReviews = (reviews || []).filter(r => r.itemId === it.id && r.approved === true)
+    .sort((a, b) => ('' + (b.ts || '')).localeCompare('' + (a.ts || '')));
+  const [showForm, setShowForm] = useState(false);
+  const [rName, setRName] = useState("");
+  const [rRating, setRRating] = useState(0);
+  const [rText, setRText] = useState("");
+  const [done, setDone] = useState(false);
+  const submitReview = async () => {
+    const ok = await onSubmitReview(it.id, rName, rRating, rText);
+    if (ok) { setDone(true); setShowForm(false); setRName(""); setRRating(0); setRText(""); }
+  };
   return e('div',{className:'overlay', onClick:onClose},
     e('div',{className:'modal', onClick:ev=>ev.stopPropagation()},
       e('button',{className:'close-x', onClick:onClose}, '×'),
       e('div',{className:'pd-hero'},
-        it.img ? e('img',{src:it.img, alt:it.name}) : e('span',{className:'ph'}, catEmoji(it.cat)),
+        imgs.length ? e(Gallery,{imgs, alt:it.name}) : e('span',{className:'ph'}, catEmoji(it.cat)),
         disc && e('span',{className:'disc-badge'}, '-'+d+'%'),
         out && e('span',{className:'stock-badge out'}, 'Out of stock')
       ),
-      e('span',{className:'pill', style:{position:'static', display:'inline-block', marginBottom:8}}, it.cat),
+      e('div',{style:{display:'flex', gap:8, alignItems:'center', marginBottom:8, flexWrap:'wrap'}},
+        e('span',{className:'pill', style:{position:'static'}}, it.cat),
+        bInfo && e('span',{className:'item-badge '+bInfo.cls}, bInfo.label)),
       e('h3', null, it.name),
+      rs.count>0 && e('div',{style:{display:'flex', alignItems:'center', gap:8, margin:'2px 0 10px'}},
+        e(Stars,{value:rs.avg, size:16}),
+        e('span',{style:{fontSize:13, color:'var(--muted)'}}, rs.avg+' · '+rs.count+' review'+(rs.count===1?'':'s'))),
       e('div',{style:{display:'flex', alignItems:'baseline', gap:10, margin:'4px 0 12px', flexWrap:'wrap'}},
         e('span',{className:'price', style:{fontSize:26}}, rupees(finalPrice(it, settings))),
         disc && e('span',{className:'price-old', style:{fontSize:16}}, rupees(it.price))
@@ -1851,7 +2041,32 @@ function ProductModal({it, settings, inCartQty, onAdd, onClose}) {
             ),
             e('button',{className:'btn-primary', style:{flex:1}, onClick:()=>onAdd(it.id, q)}, 'Add to cart')
           ),
-      remaining != null && !out && inCartQty>0 && e('p',{style:{fontSize:12.5, color:'var(--muted)', marginTop:10}}, inCartQty+' already in your cart')
+      remaining != null && !out && inCartQty>0 && e('p',{style:{fontSize:12.5, color:'var(--muted)', marginTop:10}}, inCartQty+' already in your cart'),
+      e('button',{className:'btn-ghost', style:{width:'100%', marginTop:12},
+        onClick:()=>shareItemWA(it, settings)}, '↗  Share on WhatsApp'),
+      // ---- reviews ----
+      e('div',{style:{marginTop:20, paddingTop:16, borderTop:'1px solid var(--line)'}},
+        e('div',{style:{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}},
+          e('div',{style:{fontWeight:700}}, 'Reviews'+(rs.count?(' ('+rs.count+')'):'')),
+          !showForm && e('button',{className:'link-btn', onClick:()=>{ setShowForm(true); setDone(false); }}, 'Write a review')),
+        done && e('div',{style:{fontSize:13, color:'var(--brass-deep)', fontWeight:600, marginBottom:10}}, '✓ Thanks! Your review will appear once the shop approves it.'),
+        showForm && e('div',{style:{background:'var(--surface)', border:'1px solid var(--line)', borderRadius:12, padding:14, marginBottom:12}},
+          e('div',{style:{display:'flex', gap:4, marginBottom:10}},
+            [1,2,3,4,5].map(n => e('button',{key:n, type:'button', title:n+' star'+(n>1?'s':''),
+              onClick:()=>setRRating(n),
+              style:{background:'none', border:'none', cursor:'pointer', padding:'0 2px', fontSize:30, lineHeight:1, color: n<=rRating?'#e8a13a':'var(--line)'}}, '★'))),
+          e('input',{value:rName, onChange:ev=>setRName(ev.target.value), placeholder:'Your name', maxLength:40, style:{marginBottom:8}}),
+          e('textarea',{value:rText, onChange:ev=>setRText(ev.target.value), placeholder:'Share your experience (optional)', maxLength:500, style:{marginBottom:10, minHeight:70}}),
+          e('div',{style:{display:'flex', gap:8}},
+            e('button',{className:'btn-primary', onClick:submitReview}, 'Submit review'),
+            e('button',{className:'btn-ghost', onClick:()=>setShowForm(false)}, 'Cancel'))),
+        (itemReviews.length===0 && !showForm && !done) && e('div',{style:{fontSize:13, color:'var(--muted)'}}, 'No reviews yet — be the first to review this item.'),
+        itemReviews.map((r,i)=> e('div',{key:r.id||i, style:{padding:'10px 0', borderTop:i?'1px solid var(--line)':'none'}},
+          e('div',{style:{display:'flex', alignItems:'center', gap:8, marginBottom:3}},
+            e(Stars,{value:r.rating, size:13}),
+            e('span',{style:{fontWeight:600, fontSize:13.5}}, r.name||'Customer')),
+          r.text && e('div',{style:{fontSize:13.5, color:'var(--text)', lineHeight:1.5}}, r.text)))
+      )
     )
   );
 }
@@ -2009,8 +2224,8 @@ function CartModal({cartItems, cartTotal, totals, appliedCode, setQty, removeCar
             ),
             (() => {
               const showDelivery = ch.deliveryFee > 0;
-              const showGst = totals.gstPercent > 0;
-              const showBreak = !!appliedCode || showDelivery || showGst;
+              const showGst = totals.gstPercent > 0 && totals.gstAmount > 0;
+              const showBreak = !!appliedCode || showDelivery;
               return e('div',{className:'cart-total', style:{flexDirection:'column', alignItems:'stretch'}},
                 showBreak && e('div',{className:'cart-subline'},
                   e('span', null, 'Subtotal'), e('span', null, rupees(cartTotal))),
@@ -2020,13 +2235,13 @@ function CartModal({cartItems, cartTotal, totals, appliedCode, setQty, removeCar
                 showDelivery && e('div',{className:'cart-subline'},
                   e('span', null, 'Delivery'),
                   e('span', null, totals.deliveryFee>0 ? rupees(totals.deliveryFee) : 'FREE')),
-                showGst && e('div',{className:'cart-subline'},
-                  e('span', null, 'GST ('+totals.gstPercent+'%)'), e('span', null, rupees(totals.gstAmount))),
                 e('div',{style:{display:'flex', justifyContent:'space-between', alignItems:'baseline',
                   marginTop:showBreak?10:0, paddingTop:showBreak?10:0, borderTop:showBreak?'1px solid var(--line)':'none'}},
                   e('span', null, showBreak ? 'Total' : 'Estimated total'),
                   e('span',{className:'amt'}, rupees(totals.total))
                 ),
+                showGst && e('div',{style:{fontSize:12, color:'var(--muted)', marginTop:6}},
+                  'Prices include '+totals.gstPercent+'% GST ('+rupees(totals.gstAmount)+')'),
                 ch.freeAbove>0 && totals.deliveryFee>0 && e('div',{style:{fontSize:12, color:'var(--brass-deep)', marginTop:6, fontWeight:600}},
                   'Add '+rupees(Math.max(0, ch.freeAbove-totals.afterDiscount))+' more for free delivery')
               );
@@ -2074,10 +2289,10 @@ function MyOrders({orders, onReorder, onDeleteOrder, onClose}) {
                 e('span', null, '−'+rupees(o.codeDiscount||0))),
               o.deliveryFee>0 && e('div',{className:'order-line', style:{color:'var(--muted)'}},
                 e('span', null, 'Delivery'), e('span', null, rupees(o.deliveryFee))),
-              o.gstAmount>0 && e('div',{className:'order-line', style:{color:'var(--muted)'}},
-                e('span', null, 'GST ('+o.gstPercent+'%)'), e('span', null, rupees(o.gstAmount))),
               e('div',{className:'order-line', style:{fontWeight:600, borderTop:'1px solid var(--line)', marginTop:6, paddingTop:8}},
                 e('span', null, 'Total'), e('span', null, rupees(o.total))),
+              o.gstAmount>0 && e('div',{className:'order-line', style:{color:'var(--muted)', fontSize:12}},
+                e('span', null, 'incl. GST ('+o.gstPercent+'%)'), e('span', null, rupees(o.gstAmount))),
               e('div',{style:{display:'flex', gap:8, marginTop:12, flexWrap:'wrap'}},
                 onReorder && e('button',{className:'btn-ghost', style:{flex:1}, onClick:()=>onReorder(o)}, '🔁 Order again'),
                 onDeleteOrder && st==='new' && (confirmDelId===o.id
@@ -2266,7 +2481,11 @@ function OrderCard({o, onSetDelivery, onDeliverySent, onSetStatus, onDelete}) {
           .concat(e('option',{key:'cancelled', value:'cancelled'}, 'Cancelled'))
       ),
       st!=='cancelled' && nextStatus(st) && e('button',{className:'link-btn', onClick:()=>onSetStatus(o.id, nextStatus(st))},
-        'Mark '+statusLabel(nextStatus(st))+' →')
+        'Mark '+statusLabel(nextStatus(st))+' →'),
+      (() => { const link = waLink(o.phone, statusUpdateText(o)); return link &&
+        e('button',{className:'link-btn', style:{color:'#1f9d55', fontWeight:700},
+          title:'Message this customer their order status on WhatsApp',
+          onClick:()=>window.open(link, '_blank', 'noopener')}, '📲 WhatsApp update'); })()
     ),
     o.address && e('div',{style:{fontSize:13, color:'var(--text)', background:'var(--surface)', border:'1px solid var(--line)', borderRadius:10, padding:'9px 12px', marginBottom:10, lineHeight:1.45, whiteSpace:'pre-wrap'}},
       e('span',{style:{textTransform:'uppercase', letterSpacing:'.1em', fontSize:11, color:'var(--brass-deep)', fontWeight:600, display:'block', marginBottom:3}}, 'Deliver to'),
@@ -2282,10 +2501,10 @@ function OrderCard({o, onSetDelivery, onDeliverySent, onSetStatus, onDelete}) {
       e('span', null, '−'+rupees(o.codeDiscount||0))),
     o.deliveryFee>0 && e('div',{className:'order-line', style:{color:'var(--muted)'}},
       e('span', null, 'Delivery'), e('span', null, rupees(o.deliveryFee))),
-    o.gstAmount>0 && e('div',{className:'order-line', style:{color:'var(--muted)'}},
-      e('span', null, 'GST ('+o.gstPercent+'%)'), e('span', null, rupees(o.gstAmount))),
     e('div',{className:'order-line', style:{fontWeight:600, borderTop:'1px solid var(--line)', marginTop:6, paddingTop:8}},
       e('span', null, 'Total'), e('span', null, rupees(o.total))),
+    o.gstAmount>0 && e('div',{className:'order-line', style:{color:'var(--muted)', fontSize:12}},
+      e('span', null, 'incl. GST ('+o.gstPercent+'%)'), e('span', null, rupees(o.gstAmount))),
     // delivery estimate area
     e('div',{style:{marginTop:12, paddingTop:12, borderTop:'1px dashed var(--line)'}},
       etaText && !open && e('div',{style:{display:'flex', alignItems:'center', gap:8, marginBottom:open?0:10, flexWrap:'wrap'}},
@@ -2544,7 +2763,7 @@ function StoreSettings({settings, items, onUpdateSettings, onSaved}) {
     e('div',{style:{display:'flex', gap:10, flexWrap:'wrap'}},
       e('div',{className:'field', style:{flex:'1 1 140px'}}, e('label',null,'Minimum order (₹)'),
         e('input',{type:'number', min:0, value:minOrder, onChange:ev=>{setMinOrder(ev.target.value);setChargeErr("");}, placeholder:'0'})),
-      e('div',{className:'field', style:{flex:'1 1 140px'}}, e('label',null,'GST (%)'),
+      e('div',{className:'field', style:{flex:'1 1 140px'}}, e('label',null,'GST % (included in prices)'),
         e('input',{type:'number', min:0, max:99, value:gstPercent, onChange:ev=>{setGstPercent(ev.target.value);setChargeErr("");}, placeholder:'0'}))
     ),
     chargeErr && e('div',{className:'err'}, chargeErr),
@@ -2592,7 +2811,43 @@ function Overview({items, orders, onExportCSV}) {
   );
 }
 
-function AdminDash({items, orders, unreadCount, settings, customers, onClose, onAdd, onEdit, onDelete, onToggleAvailable, onMarkRead, onChangePin, onPinChanged, onSetDelivery, onDeliverySent, onSetStatus, onDeleteOrder, onUpdateSettings, onSettingsSaved, onDeleteCustomer, onExport, onImport, onExportCSV, onResetPw, onLogout}) {
+// admin review moderation: approve to publish, or reject/remove
+function ReviewsAdmin({items, reviews, onApprove, onDelete}) {
+  const nameFor = (id) => { const it = (items||[]).find(x => x.id === id); return it ? it.name : 'Removed item'; };
+  const all = (reviews||[]).slice().sort((a,b) => ('' + (b.ts||'')).localeCompare('' + (a.ts||'')));
+  const pending = all.filter(r => r.approved !== true);
+  const approved = all.filter(r => r.approved === true);
+  const [confirmId, setConfirmId] = useState(null);
+  const fmtDate = (ts) => { try { return new Date(ts).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}); } catch { return ''; } };
+  const row = (r) => e('div',{key:r.id, style:{border:'1px solid var(--line)', borderRadius:12, padding:'12px 14px', marginBottom:10}},
+    e('div',{style:{display:'flex', justifyContent:'space-between', gap:10, flexWrap:'wrap', marginBottom:4}},
+      e('div',{style:{display:'flex', alignItems:'center', gap:8}},
+        e(Stars,{value:r.rating, size:14}),
+        e('span',{style:{fontWeight:600, fontSize:14}}, r.name||'Customer')),
+      e('span',{style:{fontSize:12, color:'var(--muted)'}}, nameFor(r.itemId)+(r.ts?(' · '+fmtDate(r.ts)):''))),
+    r.text && e('div',{style:{fontSize:13.5, color:'var(--text)', lineHeight:1.5, marginBottom:8}}, r.text),
+    e('div',{style:{display:'flex', gap:8, alignItems:'center'}},
+      r.approved!==true && e('button',{className:'btn-primary', style:{padding:'7px 14px'}, onClick:()=>onApprove(r.id)}, '✓ Approve'),
+      confirmId===r.id
+        ? e('span',{style:{display:'inline-flex', gap:8, alignItems:'center'}},
+            e('span',{style:{fontSize:13, color:'var(--muted)'}}, 'Remove?'),
+            e('button',{className:'remove', onClick:()=>{ onDelete(r.id); setConfirmId(null); }}, 'Yes'),
+            e('button',{className:'link-btn', onClick:()=>setConfirmId(null)}, 'No'))
+        : e('button',{className:'remove', onClick:()=>setConfirmId(r.id)}, r.approved===true?'Remove':'Reject')));
+  return e('div', null,
+    e('p',{style:{fontSize:13, color:'var(--muted)', marginBottom:14, lineHeight:1.5}},
+      'Approve a review to publish it on the product. Reject/Remove deletes it permanently.'),
+    e('div',{style:{fontWeight:700, marginBottom:8}}, 'Pending approval ('+pending.length+')'),
+    pending.length===0
+      ? e('div',{style:{fontSize:13, color:'var(--muted)', marginBottom:16}}, 'Nothing waiting — you’re all caught up.')
+      : pending.map(row),
+    e('div',{style:{fontWeight:700, margin:'18px 0 8px', borderTop:'1px solid var(--line)', paddingTop:16}}, 'Published ('+approved.length+')'),
+    approved.length===0
+      ? e('div',{style:{fontSize:13, color:'var(--muted)'}}, 'No published reviews yet.')
+      : approved.map(row));
+}
+
+function AdminDash({items, orders, unreadCount, settings, customers, reviews, onApproveReview, onDeleteReview, onClose, onAdd, onEdit, onDelete, onToggleAvailable, onMarkRead, onChangePin, onPinChanged, onSetDelivery, onDeliverySent, onSetStatus, onDeleteOrder, onUpdateSettings, onSettingsSaved, onDeleteCustomer, onExport, onImport, onExportCSV, onResetPw, onLogout}) {
   const importRef = useRef();
   const [tab,setTab]=useState(unreadCount>0?'orders':'overview');
   const [cur,setCur]=useState(""), [np,setNp]=useState(""), [np2,setNp2]=useState("");
@@ -2618,6 +2873,8 @@ function AdminDash({items, orders, unreadCount, settings, customers, onClose, on
         e('button',{className:tab==='orders'?'active':'', onClick:()=>setTab('orders')},
           'Inbox ('+orders.length+')', unreadCount>0 && e('span',{className:'new-badge'}, unreadCount+' new')),
         e('button',{className:tab==='customers'?'active':'', onClick:()=>setTab('customers')}, 'Customers ('+customers.length+')'),
+        e('button',{className:tab==='reviews'?'active':'', onClick:()=>setTab('reviews')},
+          'Reviews', (()=>{ const p=(reviews||[]).filter(r=>r.approved!==true).length; return p>0 && e('span',{className:'new-badge'}, p+' new'); })()),
         e('button',{className:tab==='store'?'active':'', onClick:()=>setTab('store')}, 'Store'),
         e('button',{className:tab==='account'?'active':'', onClick:()=>setTab('account')}, 'Account')
       ),
@@ -2680,6 +2937,8 @@ function AdminDash({items, orders, unreadCount, settings, customers, onClose, on
                     : e('button',{className:'remove', onClick:()=>setConfirmDel(c.email)}, 'Delete')
                 ))
           )
+        : tab==='reviews'
+        ? e(ReviewsAdmin, {items, reviews, onApprove:onApproveReview, onDelete:onDeleteReview})
         : tab==='store'
         ? e(StoreSettings, {settings, items, onUpdateSettings, onSaved:onSettingsSaved})
         : e('div', null,
@@ -2809,11 +3068,12 @@ function ItemForm({existing, categories, onClose, onSave}) {
   const [price,setPrice]=useState(existing?.price||"");
   const [discount,setDiscount]=useState(existing?.discount||"");
   const [desc,setDesc]=useState(existing?.desc||"");
-  const [img,setImg]=useState(existing?.img||null);
+  const [images,setImages]=useState(existing?.images && existing.images.length ? existing.images.slice() : (existing?.img ? [existing.img] : []));
+  const [urlInput,setUrlInput]=useState("");
+  const [badge,setBadge]=useState(existing?.badge || "");
   const [stock,setStock]=useState(existing && existing.stock!=null ? String(existing.stock) : "");
   const [available,setAvailable]=useState(existing ? existing.available!==false : true);
   const [rawImg,setRawImg]=useState(null); // image awaiting adjustment
-  const [imgErr,setImgErr]=useState(false); // an external image link failed to load
   const [err,setErr]=useState("");
   const fileRef=useRef();
 
@@ -2824,6 +3084,7 @@ function ItemForm({existing, categories, onClose, onSave}) {
     const r=new FileReader(); r.onload=()=>setRawImg(r.result); r.readAsDataURL(f);
     ev.target.value=""; // allow re-picking same file
   };
+  const addUrl=()=>{ const u=urlInput.trim(); if(!u) return; setImages(a=>[...a, u]); setUrlInput(""); };
   const submit=()=>{
     if(!name.trim()){setErr("Give the item a name.");return;}
     const p=parseFloat(price);
@@ -2833,7 +3094,7 @@ function ItemForm({existing, categories, onClose, onSave}) {
     let st = (stock===""||stock===null) ? null : Math.floor(parseFloat(stock));
     if(st!=null && (isNaN(st)||st<0)){setErr("Stock must be 0 or more (leave blank for unlimited).");return;}
     onSave({id:existing?.id, name:name.trim(), cat, price:p, discount:d,
-      desc:desc.trim()||"No description yet.", img, stock:st, available});
+      desc:desc.trim()||"No description yet.", images, img: images[0]||null, badge: badge||"", stock:st, available});
   };
   // live discounted-price preview
   const pNum = parseFloat(price), dNum = parseFloat(discount);
@@ -2863,34 +3124,43 @@ function ItemForm({existing, categories, onClose, onSave}) {
         e('input',{type:'number', min:0, value:stock, onChange:ev=>setStock(ev.target.value), placeholder:'Leave blank for unlimited'}),
         e('div',{style:{fontSize:12, color:'var(--muted)', marginTop:6, lineHeight:1.4}},
           'Tracks inventory and shows “Out of stock” at 0. Blank = not tracked.')),
+      e('div',{className:'field'}, e('label',null,'Highlight badge'),
+        e('select',{value:badge, onChange:ev=>setBadge(ev.target.value)},
+          e('option',{value:''}, 'None'),
+          e('option',{value:'new'}, 'New'),
+          e('option',{value:'bestseller'}, 'Bestseller')),
+        e('div',{style:{fontSize:12, color:'var(--muted)', marginTop:6}}, 'Shows a coloured tag on the product.')),
       e('label',{style:{display:'flex', alignItems:'center', gap:8, fontSize:14, marginBottom:16, cursor:'pointer'}},
         e('input',{type:'checkbox', checked:available, onChange:ev=>setAvailable(ev.target.checked)}),
         'Available for sale (uncheck to hide it from the store)'),
       e('div',{className:'field'}, e('label',null,'Description'),
         e('textarea',{value:desc, onChange:ev=>setDesc(ev.target.value), placeholder:'A short description for shoppers.'})),
-      e('div',{className:'field'}, e('label',null,'Photo'),
-        e('div', null,
-          e('div',{style:{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}},
-            e('label',{className:'file-label'}, img?'Change photo':'Upload photo',
-              e('input',{ref:fileRef, type:'file', accept:'image/*', style:{display:'none'}, onChange:pick})),
-            img && isDataUrl(img) && e('button',{className:'link-btn', onClick:()=>setRawImg(img)}, 'Adjust photo'),
-            img && e('button',{className:'remove', onClick:()=>{ setImg(null); setImgErr(false); }}, 'Remove')
-          ),
-          e('div',{style:{marginTop:10}},
-            e('input',{type:'url', value:(img && !isDataUrl(img)) ? img : "",
-              onChange:ev=>{ setImgErr(false); setImg(ev.target.value.trim() || null); },
-              placeholder:'…or paste an image link (https://…)'}),
-            e('div',{style:{fontSize:12, color:'var(--muted)', marginTop:6, lineHeight:1.4}},
-              'Recommended: upload the photo to your GitHub repo and paste its link here — it keeps the store fast and never counts toward the 1 MB limit. Uploading from your device embeds the image instead (counts toward the limit).')),
-          imgErr && e('div',{className:'err', style:{marginTop:8}}, 'That image link didn’t load — double-check the URL.'),
-          img && e('img',{className:'img-preview', src:img, onError:()=>setImgErr(true), onLoad:()=>setImgErr(false)}))),
+      e('div',{className:'field'}, e('label',null,'Photos'),
+        images.length>0 && e('div',{style:{display:'flex', gap:8, flexWrap:'wrap', marginBottom:10}},
+          images.map((src,i)=> e('div',{key:i, style:{position:'relative', width:80, height:80, borderRadius:10, overflow:'hidden', border:'1px solid var(--line)', background:'var(--surface-2)'}},
+            e('img',{src, style:{width:'100%', height:'100%', objectFit:'cover', display:'block'}}),
+            i===0 && e('span',{style:{position:'absolute', top:0, left:0, background:'var(--brass-deep)', color:'#fff', fontSize:9, fontWeight:700, letterSpacing:'.04em', padding:'2px 5px', borderBottomRightRadius:6}}, 'COVER'),
+            e('button',{type:'button', title:'Remove', onClick:()=>setImages(a=>a.filter((_,j)=>j!==i)),
+              style:{position:'absolute', top:3, right:3, width:20, height:20, borderRadius:'50%', border:'none', background:'rgba(28,24,20,.82)', color:'#fff', fontSize:13, lineHeight:1, cursor:'pointer'}}, '×'),
+            i>0 && e('button',{type:'button', title:'Make cover', onClick:()=>setImages(a=>{ const c=[...a]; const [x]=c.splice(i,1); c.unshift(x); return c; }),
+              style:{position:'absolute', bottom:3, left:3, background:'rgba(28,24,20,.82)', color:'#fff', border:'none', borderRadius:6, fontSize:9, fontWeight:700, padding:'2px 5px', cursor:'pointer'}}, '★ cover')
+          ))),
+        e('label',{className:'file-label'}, '+ Upload photo',
+          e('input',{ref:fileRef, type:'file', accept:'image/*', style:{display:'none'}, onChange:pick})),
+        e('div',{style:{display:'flex', gap:8, marginTop:10, flexWrap:'wrap'}},
+          e('input',{type:'url', value:urlInput, onChange:ev=>setUrlInput(ev.target.value),
+            onKeyDown:ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); addUrl(); } },
+            placeholder:'…or paste an image link (https://…)', style:{flex:'1 1 200px'}}),
+          e('button',{type:'button', className:'btn-ghost', style:{padding:'10px 16px'}, onClick:addUrl}, 'Add link')),
+        e('div',{style:{fontSize:12, color:'var(--muted)', marginTop:8, lineHeight:1.4}},
+          'Add one or more photos — the first is the cover, the rest form a swipeable gallery. Recommended: upload photos to your GitHub repo and paste the links (keeps the store fast, off the 1 MB limit). Uploads embed the image instead.')),
       err && e('div',{className:'err'}, err),
       e('div',{className:'modal-actions'},
         e('button',{className:'btn-ghost', onClick:onClose}, 'Cancel'),
         e('button',{className:'btn-primary', onClick:submit}, existing?'Save changes':'Add item')),
       rawImg && e(ImageEditor, {src:rawImg, aspect:4/3, round:false,
         onCancel:()=>setRawImg(null),
-        onApply:(data)=>{ setImg(data); setRawImg(null); }})
+        onApply:(data)=>{ setImages(a=>[...a, data]); setRawImg(null); }})
     )
   );
 }
