@@ -4,18 +4,18 @@
 <title>Jain’s Bartan Bazaar — Kitchenwares</title>
 <meta name="description" content="Jain’s Bartan Bazaar, Bhandup West, Mumbai — quality stainless steel kitchenware & cookware. Browse cookware, utensils, mixers, cookers, bakeware and storage, and order easily on WhatsApp.">
 <meta name="theme-color" content="#e8732e">
-<link rel="icon" type="image/png" href="https://dfrod.github.io/maa-santoshi-store/photos/logo-jbb.png">
-<link rel="apple-touch-icon" href="https://dfrod.github.io/maa-santoshi-store/photos/logo-jbb.png">
+<link rel="icon" type="image/png" href="https://dfrod.github.io/jain-bartan-bazaar/photos/logo-jbb.png">
+<link rel="apple-touch-icon" href="https://dfrod.github.io/jain-bartan-bazaar/photos/logo-jbb.png">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://dfrod.github.io/maa-santoshi-store/">
+<meta property="og:url" content="https://dfrod.github.io/jain-bartan-bazaar/">
 <meta property="og:title" content="Jain’s Bartan Bazaar — Kitchenwares">
 <meta property="og:description" content="Browse our kitchenware and place your order on WhatsApp.">
-<meta property="og:image" content="https://dfrod.github.io/maa-santoshi-store/photos/og-banner.jpg">
+<meta property="og:image" content="https://dfrod.github.io/jain-bartan-bazaar/photos/og-banner.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Jain’s Bartan Bazaar — Kitchenwares, Bhandup West, Mumbai">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://dfrod.github.io/maa-santoshi-store/photos/og-banner.jpg">
+<meta name="twitter:image" content="https://dfrod.github.io/jain-bartan-bazaar/photos/og-banner.jpg">
 <div id="root"></div>
 
 <style>
@@ -827,7 +827,7 @@ const DEFAULT_CATEGORIES = ["Cookware", "Utensils", "Mixers", "Cookers", "Bakewa
 const EMOJI = { Cookware:"🍳", Utensils:"🥄", Mixers:"🌀", Cookers:"🍲", Bakeware:"🧁", Storage:"🫙" };
 const FALLBACK_EMOJI = "🍴";
 const DEFAULT_PIN = "admin123"; // initial admin password — change it from the dashboard
-const LOGO_URL = "https://dfrod.github.io/maa-santoshi-store/photos/logo-jbb.png"; // baked-in default store logo (admin can override in settings)
+const LOGO_URL = "https://dfrod.github.io/jain-bartan-bazaar/photos/logo-jbb.png"; // baked-in default store logo (admin can override in settings)
 const DEFAULT_SETTINGS = {
   logo: LOGO_URL, categories: DEFAULT_CATEGORIES, promo: null, codes: [],
   shop: { phone:"9167972686", whatsapp:"9167972686", address:"Bhandup West, Mumbai", hours:"Open 8 AM – 6 PM", maps:"https://maps.app.goo.gl/p9mpYxC4tWteExAx5" },
@@ -1129,7 +1129,7 @@ function LogoMark() {
   );
 }
 
-const IMG_BASE = "https://dfrod.github.io/maa-santoshi-store/photos/";
+const IMG_BASE = "https://dfrod.github.io/jain-bartan-bazaar/photos/";
 const SEED = [
   { id:"s1", name:"Copper Core Sauté Pan", cat:"Cookware", price:10999, desc:"Tri-ply stainless with a copper core for even, responsive heat.", img:IMG_BASE+"Copper%20Core%20Saute%20Pan.jpg" },
   { id:"s2", name:"Acacia Spoon Set", cat:"Utensils", price:2899, desc:"Hand-finished wooden spoons that won't scratch your pans.", img:IMG_BASE+"Spoon%20Set.jpg" },
@@ -1237,12 +1237,20 @@ function App() {
               // and uploaded (data:) images are left untouched, so this no-ops on later sign-ins.
               const raw = cat.data().items || [];
               let changed = false;
+              const fixUrl = (s) => {
+                if (typeof s !== "string" || !s || isDataUrl(s)) return s;
+                // stale GitHub Pages URL from the old repo name → the renamed repo
+                if (s.indexOf("github.io/maa-santoshi-store/") !== -1) { changed = true; return s.replace("github.io/maa-santoshi-store/", "github.io/jain-bartan-bazaar/"); }
+                // bare relative path (e.g. "Trio.jpg") → full repo URL under photos/
+                if (!/^https?:\/\//i.test(s)) { changed = true; return IMG_BASE + s.replace(/^\/+/, "").replace(/^photos\//i, ""); }
+                return s;
+              };
               const fixed = raw.map(it => {
-                if (it && typeof it.img === "string" && it.img && !/^https?:\/\//i.test(it.img) && !isDataUrl(it.img)) {
-                  changed = true;
-                  return { ...it, img: IMG_BASE + it.img.replace(/^\/+/, "").replace(/^photos\//i, "") };
-                }
-                return it;
+                if (!it) return it;
+                const next = { ...it };
+                if (typeof it.img === "string") next.img = fixUrl(it.img);
+                if (Array.isArray(it.images)) next.images = it.images.map(fixUrl);
+                return next;
               });
               if (changed) await catRef.set({ items: fixed });
             }
