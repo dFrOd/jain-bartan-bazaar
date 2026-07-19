@@ -609,6 +609,15 @@
     justify-content: center; transition: background .15s ease, transform .15s ease; z-index: 2;
   }
   .share-fab:hover { background: #25d366; color: #fff; transform: scale(1.08); }
+  /* Floating "Chat on WhatsApp" button (always visible) */
+  .wa-fab {
+    position: fixed; right: 18px; bottom: 18px; width: 56px; height: 56px; border-radius: 50%;
+    background: #25d366; color: #fff; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 8px 22px rgba(37,211,102,.45); z-index: 90; cursor: pointer; text-decoration: none;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .wa-fab:hover { transform: scale(1.08); box-shadow: 0 10px 26px rgba(37,211,102,.6); }
+  @media (max-width: 600px) { .wa-fab { right: 14px; bottom: 14px; width: 52px; height: 52px; } }
   /* New / Bestseller badge */
   .item-badge {
     display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
@@ -1936,7 +1945,13 @@ function App() {
       onResetPw:()=>{ if(FB.auth) FB.auth.sendPasswordResetEmail(ADMIN_EMAIL).then(()=>showToast("Reset email sent to "+ADMIN_EMAIL)).catch(()=>showToast("Couldn’t send reset email")); },
       onLogout:()=>{setIsAdmin(false); if(FB.enabled && FB.auth) FB.auth.signOut(); setModal(null);showToast("Admin signed out");}}),
     modal==='addItem' && e(ItemForm, {existing:editItem, categories:CATEGORIES, onClose:()=>setModal('admin'), onSave:upsertItem}),
-    toast && e('div',{className:'toast'}, toast)
+    toast && e('div',{className:'toast'}, toast),
+    (settings.shop && settings.shop.whatsapp && waLink(settings.shop.whatsapp)) &&
+      e('a',{className:'wa-fab', href:waLink(settings.shop.whatsapp, "Hello Jain’s Bartan Bazaar, I have a question."),
+        target:'_blank', rel:'noopener', 'aria-label':'Chat on WhatsApp', title:'Chat on WhatsApp'},
+        e('svg',{viewBox:'0 0 24 24', width:30, height:30, fill:'currentColor', 'aria-hidden':'true'},
+          e('path',{d:'M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.8 14.16c-.24.68-1.42 1.31-1.96 1.36-.5.05-.98.24-3.3-.69-2.78-1.1-4.56-3.94-4.7-4.12-.14-.18-1.13-1.5-1.13-2.86 0-1.36.71-2.03.97-2.31.24-.26.53-.32.71-.32.18 0 .35 0 .5.01.16.01.38-.06.59.45.24.58.82 2 .89 2.14.07.14.12.31.02.49-.09.18-.14.29-.28.45-.14.16-.29.36-.42.48-.14.14-.28.29-.12.57.16.28.71 1.17 1.52 1.9 1.05.94 1.93 1.23 2.21 1.37.28.14.44.12.6-.07.18-.21.71-.83.9-1.11.18-.28.37-.23.62-.14.25.09 1.61.76 1.89.9.28.14.46.21.53.32.07.12.07.68-.17 1.36z'}))
+      )
   );
 }
 
